@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local state (cache, metrics DB, downloaded data)
+.cache/
+*.db
+*.sqlite
+data/raw/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
