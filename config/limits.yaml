@@ -1,0 +1,13 @@
+# Client-side rate limits per model (keys are gateway model names; "<provider>/*" is the
+# fallback for that provider). Models with no entry (mock/, local/) are not limited.
+#   rpm = requests/minute   tpm = tokens/minute   rpd = requests/day   tpd = tokens/day
+#
+# Groq free-tier numbers from https://console.groq.com/docs/rate-limits (checked 2026-10-15).
+# Confirm your own account's numbers at https://console.groq.com/settings/limits.
+
+groq/openai/gpt-oss-20b:  {rpm: 30, tpm: 8000, rpd: 1000, tpd: 200000}
+groq/openai/gpt-oss-120b: {rpm: 30, tpm: 8000, rpd: 1000, tpd: 200000}
+groq/qwen/qwen3.8-27b:    {rpm: 30, tpm: 8000, rpd: 1000, tpd: 200000}
+
+# Any other Groq model: a conservative guess until you add its real numbers above.
+groq/*: {rpm: 30, tpm: 6000, rpd: 1000, tpd: 100000}

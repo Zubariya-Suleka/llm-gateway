@@ -1,0 +1,13 @@
+# USD per 1M tokens on Groq's paid (on-demand) tier. The free tier costs $0; est_cost_usd
+# shows what the same traffic would cost once paid for.
+# Source: https://console.groq.com/docs/models (checked 2026-10-15).
+
+groq/openai/gpt-oss-20b:  {input: 0.075, output: 0.30}
+groq/openai/gpt-oss-120b: {input: 0.15,  output: 0.60}
+groq/qwen/qwen3.8-27b:    {input: 0.80,  output: 4.00}   # preview model
+
+# llama-3.1-8b-instant and llama-3.3-70b-versatile are Enterprise-only ("contact sales")
+# as of 2026-10, so they have no public price. Unpriced models show "-" in stats.
+
+mock/*:  {input: 0, output: 0}
+local/*: {input: 0, output: 0}

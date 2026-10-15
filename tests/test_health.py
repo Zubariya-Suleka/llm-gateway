@@ -11,3 +11,4 @@ def test_healthz_returns_ok():
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["groq_key_configured"] is False

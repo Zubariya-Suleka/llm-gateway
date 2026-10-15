@@ -10,6 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      # tiktoken downloads its ~1.7 MB vocabulary on first use; don't fetch it every run.
+      - uses: actions/cache@v4
+        with:
+          path: .cache/tiktoken
+          key: tiktoken-cl100k
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .

@@ -1,0 +1,7 @@
+# Models scripts/benchmark.py runs by default. Model ids live here, never in code.
+# Groq free-tier text models as of 2026-10-15 (https://console.groq.com/docs/models).
+# qwen3.8-27b is a preview model: Groq may remove it at short notice.
+benchmark:
+  - groq/openai/gpt-oss-20b
+  - groq/openai/gpt-oss-120b
+  - groq/qwen/qwen3.8-27b
