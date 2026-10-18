@@ -62,6 +62,30 @@ def test_400_is_not_retryable():
     assert info.value.retry_after is None
 
 
+def test_unparseable_tool_call_keeps_what_the_model_wrote():
+    def handler(request):
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "Parsing failed. The model generated output that could not be"
+                    " parsed.",
+                    "type": "invalid_request_error",
+                    "code": "tool_use_failed",
+                    "failed_generation": '{"name": "submit_answer", "arguments": {"sql": "SEL',
+                }
+            },
+        )
+
+    with pytest.raises(ProviderError) as info:
+        call(provider(handler))
+    assert not info.value.retryable  # same input, same broken output: retrying won't help
+    assert info.value.details == {
+        "provider_code": "tool_use_failed",
+        "failed_generation": '{"name": "submit_answer", "arguments": {"sql": "SEL',
+    }
+
+
 def test_network_failure_is_a_retryable_502():
     def handler(request):
         raise httpx.ConnectError("no route", request=request)

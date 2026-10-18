@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from llm_gateway import __version__
 from llm_gateway.config import Settings, get_settings
-from llm_gateway.errors import BadRequest, GatewayError
+from llm_gateway.errors import BadRequest, GatewayError, ProviderError
 from llm_gateway.gateway import Gateway
 from llm_gateway.schemas import ChatCompletionRequest
 from llm_gateway.tokens import count_tokens
@@ -39,11 +39,10 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
         headers = {}
         if exc.retry_after is not None:
             headers["Retry-After"] = str(math.ceil(exc.retry_after))
-        return JSONResponse(
-            {"error": {"message": exc.message, "type": exc.error_type, "code": exc.status_code}},
-            status_code=exc.status_code,
-            headers=headers,
-        )
+        error = {"message": exc.message, "type": exc.error_type, "code": exc.status_code}
+        if isinstance(exc, ProviderError):
+            error |= exc.details  # e.g. provider_code, failed_generation
+        return JSONResponse({"error": error}, status_code=exc.status_code, headers=headers)
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:

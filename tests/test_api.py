@@ -1,8 +1,10 @@
 import pytest
+from conftest import ScriptedProvider
 from fastapi.testclient import TestClient
 
 from llm_gateway.app import create_app
 from llm_gateway.config import Settings
+from llm_gateway.errors import ProviderError
 
 
 @pytest.fixture
@@ -77,6 +79,24 @@ def test_persistent_429_is_retried_then_returned_with_retry_after(client):
     assert response.status_code == 429
     assert response.headers["retry-after"] == "0"
     assert client.metrics.query()[-1]["attempts"] == 5
+
+
+def test_provider_error_details_reach_the_caller(make_gateway):
+    failing = ScriptedProvider(
+        ProviderError(
+            "groq 400: Parsing failed",
+            status_code=400,
+            details={"provider_code": "tool_use_failed", "failed_generation": "<|call|>{bad"},
+        )
+    )
+    gateway, _ = make_gateway({"fake": failing})
+    with TestClient(create_app(Settings(_env_file=None), gateway=gateway)) as c:
+        response = c.post("/v1/chat/completions", json=body(model="fake/m"))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["provider_code"] == "tool_use_failed"
+    assert error["failed_generation"] == "<|call|>{bad"
 
 
 def test_missing_messages_is_a_validation_error(client):

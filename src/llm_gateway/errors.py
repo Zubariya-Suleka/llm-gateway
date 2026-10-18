@@ -40,8 +40,12 @@ class ProviderError(GatewayError):
         status_code: int,
         retry_after: float | None = None,
         retryable: bool | None = None,
+        details: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message, status_code=status_code, retry_after=retry_after)
         if retryable is None:
             retryable = status_code == 429 or status_code >= 500
         self.retryable = retryable
+        # Extra fields from the provider's error worth passing on, e.g. Groq's
+        # `failed_generation`: the model output it could not parse as a tool call.
+        self.details = details or {}

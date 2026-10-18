@@ -21,13 +21,23 @@ def _retry_after(response: httpx.Response) -> float | None:
         return None
 
 
-def _error_message(response: httpx.Response) -> str:
+def _error_info(response: httpx.Response) -> tuple[str, dict[str, str]]:
+    """The error message, plus the fields worth passing on to the caller."""
     try:
         error = response.json().get("error") or {}
-        message = error.get("message") if isinstance(error, dict) else str(error)
     except ValueError:
-        message = None
-    return f"groq {response.status_code}: {message or response.text[:500] or 'no body'}"
+        error = {}
+    if not isinstance(error, dict):
+        error = {"message": str(error)}
+    message = error.get("message") or response.text[:500] or "no body"
+    details = {}
+    if error.get("code"):
+        details["provider_code"] = str(error["code"])
+    if error.get("failed_generation"):
+        # What the model actually wrote when Groq couldn't parse it as a tool call:
+        # the most useful thing to have when debugging an agent.
+        details["failed_generation"] = str(error["failed_generation"])
+    return f"groq {response.status_code}: {message}", details
 
 
 class GroqProvider:
@@ -60,10 +70,12 @@ class GroqProvider:
             raise ProviderError(f"cannot reach groq: {exc!r}", status_code=502) from exc
 
         if response.status_code >= 400:
+            message, details = _error_info(response)
             raise ProviderError(
-                _error_message(response),
+                message,
                 status_code=response.status_code,
                 retry_after=_retry_after(response),
+                details=details,
             )
         return response.json()
 
