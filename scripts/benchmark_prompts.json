@@ -1,0 +1,71 @@
+{
+  "_comment": "Fixed benchmark inputs. 20 short prompts; 20 medium = each passage x each medium task; 10 long = all passages (rotated) + one question per passage. Edit freely, but changing anything invalidates earlier cached runs and comparisons.",
+  "short": [
+    "What is the capital of Australia?",
+    "Convert 72 degrees Fahrenheit to Celsius.",
+    "Name the three primary colours of light.",
+    "What does HTTP stand for?",
+    "Give one synonym for the word \"rapid\".",
+    "How many days are in a leap year?",
+    "What is 17 multiplied by 23?",
+    "Who wrote the novel \"Pride and Prejudice\"?",
+    "What is the chemical symbol for gold?",
+    "Translate \"thank you\" into Spanish.",
+    "At what temperature in Celsius does water boil at sea level?",
+    "Which is the largest planet in the solar system?",
+    "What does SQL stand for?",
+    "Is 97 a prime number? Answer yes or no.",
+    "What is the plural of \"index\"?",
+    "In one sentence, what is a database index?",
+    "In what year did humans first land on the Moon?",
+    "Write a haiku about coffee.",
+    "What is the square root of 144?",
+    "Give one word that rhymes with \"orange\", or say that none exists."
+  ],
+  "medium_tasks": [
+    "Summarise the passage below in exactly two sentences.",
+    "List three key facts from the passage below as short bullet points."
+  ],
+  "passages": [
+    {
+      "text": "Late deliveries are one of the strongest predictors of a bad review in online retail. When a parcel arrives after the estimated date, customers are far more likely to leave one or two stars, even if the product itself is fine. Retailers usually measure this with an on-time rate: the share of orders delivered on or before the promised date. A common mistake is to compute the rate over all orders, including cancelled ones, which inflates the denominator and makes performance look better than it is. Another mistake is to compare the delivery date with the order date instead of the promised date. Regional differences matter too: orders shipped to remote states travel longer distances, pass through more carriers and miss their estimates more often. Fixing late deliveries often starts with more honest delivery estimates rather than faster trucks.",
+      "question": "What are two common mistakes when computing an on-time delivery rate?"
+    },
+    {
+      "text": "A cache stores the result of an expensive operation so the next identical request can be answered without repeating the work. The hard part is deciding what counts as identical. A cache key must include every input that can change the output and nothing that cannot. If a key leaves out an input, two different requests share an answer and the cache returns wrong results. If a key includes irrelevant inputs, such as a timestamp, every request looks new and the cache never hits. Caches also need a policy for staleness: some results stay valid forever, while others expire after minutes. For language models, caching is only safe when the output is deterministic, which in practice means a temperature of zero. Even then, providers may update a model behind the same name, so long-lived caches should record which model version produced each answer.",
+      "question": "Why is caching language model responses only safe at temperature zero?"
+    },
+    {
+      "text": "Customer reviews look simple but hide several measurement traps. Most platforms let customers rate from one to five stars, and the distribution is usually J-shaped: many fives, a cluster of ones, and few scores in between. That means the average rating hides a lot of information, and two sellers with the same 4.1 average can have very different shares of angry customers. Reviews are also self-selected, because customers with extreme experiences are the most likely to write one. Analysts often track the share of one- and two-star reviews instead of the mean, since it reacts faster to operational problems. Text comments add context but are sparse; in many datasets fewer than half of reviews include any text at all, and those that do are written in the customer's own language, which complicates analysis across countries.",
+      "question": "Which metric do analysts often track instead of the mean rating, and why?"
+    },
+    {
+      "text": "A warehouse management system tracks where every item is stored and how it moves. When an order arrives, the system creates a pick list that tells workers which shelves to visit. The order of that list matters: a well-sequenced route can cut walking distance by a third. Fast-moving products are usually placed near the packing stations, a practice called slotting, while slow movers go to higher or more distant shelves. Inventory accuracy is the other key metric. If the system believes ten units are on a shelf but only eight are there, orders will be accepted that cannot be fulfilled, and the error shows up later as a cancellation or a late shipment. Regular cycle counts, where a small part of the warehouse is counted every day, keep the records honest without closing the building for a full stocktake.",
+      "question": "What is slotting?"
+    },
+    {
+      "text": "Rate limiting protects a shared service from being overwhelmed by any single client. The token bucket is the most common algorithm. Each client has a bucket that holds a fixed number of tokens and refills at a steady rate. Every request removes a token; when the bucket is empty, the request must wait or be rejected. The bucket size controls how large a burst can be, while the refill rate controls the long-term average. Many APIs limit both requests per minute and tokens per minute, because a single request to a language model can be tiny or enormous. Clients that respect these limits on their own side avoid most rejections, and when a rejection does happen, the server often sends a retry-after header saying how long to wait. Retrying immediately, or retrying without random jitter, tends to make congestion worse.",
+      "question": "In a token bucket, what do the bucket size and the refill rate each control?"
+    },
+    {
+      "text": "Evaluating a machine learning model starts with a held-out test set that the model never saw during training. The metric should match the decision the model supports: accuracy is misleading when one class is rare, so fraud models are judged on precision and recall instead. For generative models the problem is harder, because there are many acceptable answers. Teams increasingly use a second, larger model as a judge, asking it to score each answer against a rubric. A judge is only useful if it agrees with humans, so a small set of answers should be scored by people first and the agreement measured. Results also vary between runs, especially when sampling is enabled. Running the same evaluation several times and reporting the spread prevents a team from celebrating an improvement that is really just noise.",
+      "question": "Why should a small set of answers be scored by humans before trusting an LLM judge?"
+    },
+    {
+      "text": "Brazil is the fifth-largest country in the world by area, and its population is concentrated along the Atlantic coast. The state of Sao Paulo alone accounts for roughly a fifth of the population and a much larger share of online retail, so many sellers and warehouses are based there. Shipping from Sao Paulo to nearby states often takes two or three days, while parcels bound for northern states such as Amazonas or Roraima can take two weeks or more, partly because some routes depend on river transport. Freight costs follow the same pattern, and for cheap products the shipping fee can exceed the price of the item. Marketplaces respond by showing different delivery estimates by postcode and by encouraging sellers to keep stock in regional fulfilment centres closer to customers.",
+      "question": "Why can parcels to northern Brazilian states take two weeks or more?"
+    },
+    {
+      "text": "In Brazil, paying for online purchases in installments is extremely common. A customer buying a 600-real appliance might split the charge into ten monthly payments on a credit card, often without interest when the merchant absorbs the cost. Besides credit cards, shoppers use boleto bancario, a payment slip that can be paid at banks or lottery shops, and more recently Pix, an instant transfer system launched by the central bank in 2020. Boletos take one to three business days to clear, which delays order approval and shipping. Debit cards and vouchers make up a small remaining share. For analysts, installments complicate revenue reporting: the order value is recognised at purchase, but the merchant may receive the money over many months, and the number of installments correlates with the price of the order.",
+      "question": "Why do boleto payments delay shipping?"
+    },
+    {
+      "text": "A SQL join combines rows from two tables using a shared key. An inner join keeps only rows that match on both sides, so orders without a matching customer disappear from the result. A left join keeps every row from the left table and fills missing matches with nulls, which is usually what you want when counting things that might have zero related rows. The most common join bug is a fan-out: joining orders to order items multiplies each order by its number of items, so summing an order-level column such as freight afterwards counts it several times. The fix is to aggregate the detail table first, then join, or to count distinct order identifiers. Another frequent bug is joining on the wrong identifier, for example a per-order customer id instead of a stable id that identifies the same person across orders.",
+      "question": "What is a join fan-out, and how can it be fixed?"
+    },
+    {
+      "text": "Solar power has become the cheapest source of new electricity in many countries, but it produces energy only when the sun shines. Grid operators handle this with a mix of tools. Batteries store midday surplus and release it in the evening peak, though most grid batteries today cover only a few hours. Long-distance transmission lines move power from sunny regions to cloudy ones. Demand response pays large consumers, such as factories or data centres, to shift their usage to times when power is plentiful. Hydroelectric dams can act as giant batteries by holding back water when solar output is high. The result is that the value of an extra solar panel falls as more are installed, because they all produce at the same hours, a pattern energy analysts call the duck curve.",
+      "question": "What pattern makes each extra solar panel less valuable, and why does it happen?"
+    }
+  ]
+}
