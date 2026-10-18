@@ -27,7 +27,16 @@ def test_percentile_interpolates():
     assert percentile([], 50) is None
 
 
-def row(model="groq/a", status=200, cache_hit=0, latency_ms=100.0, tps=500.0, cost=0.001):
+def row(
+    model="groq/a",
+    status=200,
+    cache_hit=0,
+    latency_ms=100.0,
+    tps=500.0,
+    cost=0.001,
+    prompt=None,
+    cached=None,
+):
     return {
         "model": model,
         "status": status,
@@ -35,6 +44,8 @@ def row(model="groq/a", status=200, cache_hit=0, latency_ms=100.0, tps=500.0, co
         "latency_ms": latency_ms,
         "tokens_per_sec": tps,
         "est_cost_usd": cost,
+        "prompt_tokens": prompt,
+        "cached_tokens": cached,
     }
 
 
@@ -57,6 +68,17 @@ def test_summarize_per_model():
     assert a.median_tokens_per_sec == 500  # cache hits excluded
     assert a.cost_per_1k_usd == pytest.approx(1000 * (0.001 + 0.001 + 0.0) / 3)
     assert b.cost_per_1k_usd is None
+    assert a.prompt_cached_pct is None  # no prompt token counts in these rows
+
+
+def test_prompt_cached_share_counts_only_calls_that_reached_the_provider():
+    rows = [
+        row(prompt=1000, cached=800),
+        row(prompt=1000, cached=0),
+        row(cache_hit=1, prompt=5000, cached=None),  # our own cache: Groq never saw it
+    ]
+    [stats] = summarize(rows)
+    assert stats.prompt_cached_pct == pytest.approx(40.0)
 
 
 def test_markdown_table_has_header_and_one_line_per_model():
@@ -69,4 +91,6 @@ def test_markdown_table_has_header_and_one_line_per_model():
 
 def test_text_table_renders_missing_values_as_dash():
     line = format_table(summarize([row(cost=None)])).splitlines()[2]
-    assert line.split()[6] == "-"  # the $/1K column
+    cells = line.split()
+    assert cells[6] == "-"  # prompt cached %: no token counts
+    assert cells[7] == "-"  # $/1K req: no price

@@ -51,18 +51,26 @@ class ScriptedProvider:
         pass
 
 
-def completion(content: str = "hi", prompt_tokens: int = 10, completion_tokens: int = 20) -> dict:
+def completion(
+    content: str = "hi",
+    prompt_tokens: int = 10,
+    completion_tokens: int = 20,
+    cached_tokens: int | None = None,
+) -> dict:
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "completion_time": 0.1,
+    }
+    if cached_tokens is not None:  # Groq adds this when its prompt cache was used
+        usage["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
     return {
         "id": "x",
         "object": "chat.completion",
         "model": "provider-name",
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}}],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-            "completion_time": 0.1,
-        },
+        "usage": usage,
     }
 
 
@@ -82,7 +90,7 @@ def make_gateway(tmp_path: Path):
             limiter=RateLimiter(limits or {}),
             retry=retry or RetryPolicy(sleep=no_sleep, rand=lambda: 0.0),
             metrics=metrics,
-            pricing=Pricing({"fake/*": Price(1.0, 2.0), "mock/*": Price(0, 0)}),
+            pricing=Pricing({"fake/*": Price(1.0, 2.0, 0.5), "mock/*": Price(0, 0)}),
         )
         return gateway, metrics
 

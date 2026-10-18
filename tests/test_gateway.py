@@ -41,6 +41,33 @@ def test_success_writes_a_full_metrics_row(make_gateway):
     assert row["total_ms"] >= row["latency_ms"]
 
 
+def test_prompt_cache_hits_are_recorded_and_priced_at_the_cached_rate(make_gateway):
+    fake = ScriptedProvider(
+        completion(prompt_tokens=1000, completion_tokens=500, cached_tokens=600)
+    )
+    gateway, metrics = make_gateway({"fake": fake})
+
+    asyncio.run(gateway.complete(req()))
+
+    [row] = metrics.query()
+    assert row["cached_tokens"] == 600
+    # 400 uncached at $1/M + 600 cached at $0.5/M + 500 output at $2/M
+    assert row["est_cost_usd"] == pytest.approx((400 * 1.0 + 600 * 0.5 + 500 * 2.0) / 1e6)
+
+
+def test_prompt_cache_hits_do_not_use_up_the_token_budget(make_gateway):
+    # Each call: 1500 prompt tokens, 1400 of them from Groq's prompt cache, 50 output.
+    fake = ScriptedProvider(
+        completion(prompt_tokens=1500, completion_tokens=50, cached_tokens=1400)
+    )
+    gateway, _ = make_gateway({"fake": fake}, limits={"fake/*": ModelLimits(tpd=2000)})
+
+    # 150 counted tokens per call fit three times; 1550 per call would fail on the 2nd.
+    for _ in range(3):
+        asyncio.run(gateway.complete(req(temperature=0.5)))
+    assert len(fake.calls) == 3
+
+
 def test_failure_writes_a_row_and_reraises(make_gateway):
     fake = ScriptedProvider(ProviderError("bad tool schema", status_code=400))
     gateway, metrics = make_gateway({"fake": fake})

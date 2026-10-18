@@ -31,6 +31,8 @@ class RequestRecord:
     attempts: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Prompt tokens Groq served from its prompt cache: half price, not rate-limited.
+    cached_tokens: int | None = None
     latency_ms: float | None = None
     total_ms: float | None = None
     completion_time_s: float | None = None
@@ -40,6 +42,9 @@ class RequestRecord:
 
 
 _COLUMNS = [f.name for f in fields(RequestRecord)]
+
+# Columns added after the first release: existing metrics.db files get them on open.
+_ADDED_COLUMNS = {"cached_tokens": "INTEGER"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -54,6 +59,7 @@ CREATE TABLE IF NOT EXISTS requests (
     attempts INTEGER NOT NULL,
     prompt_tokens INTEGER,
     completion_tokens INTEGER,
+    cached_tokens INTEGER,
     latency_ms REAL,
     total_ms REAL,
     completion_time_s REAL,
@@ -71,6 +77,10 @@ class MetricsStore:
         self._conn = connect(path)
         self._lock = threading.Lock()
         self._conn.executescript(_SCHEMA)
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(requests)")}
+        for column, sql_type in _ADDED_COLUMNS.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE requests ADD COLUMN {column} {sql_type}")
 
     def record(self, rec: RequestRecord) -> None:
         values = asdict(rec)
@@ -107,11 +117,15 @@ class MetricsStore:
         return [dict(r) for r in rows]
 
     def usage_since(self, model: str, since: datetime) -> tuple[int, int]:
-        """(provider calls, tokens) for a model since `since`; cache hits cost nothing."""
+        """(provider calls, rate-limited tokens) for a model since `since`.
+
+        Gateway cache hits cost nothing, and prompt tokens Groq served from its own prompt
+        cache don't count towards its limits either.
+        """
         with self._lock:
             row = self._conn.execute(
                 """SELECT COALESCE(SUM(attempts), 0),
-                          COALESCE(SUM(COALESCE(prompt_tokens, 0)
+                          COALESCE(SUM(COALESCE(prompt_tokens, 0) - COALESCE(cached_tokens, 0)
                                        + COALESCE(completion_tokens, 0)), 0)
                    FROM requests WHERE model = ? AND ts >= ? AND cache_hit = 0""",
                 (model, utc_iso(since)),

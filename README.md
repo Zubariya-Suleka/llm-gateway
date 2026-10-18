@@ -37,9 +37,9 @@ Each layer in more detail:
 | Router | `groq/<id>` → Groq, `local/<hf-id>` → SmolLM, `mock/<name>` → fake. Splits on the first `/` only (`groq/openai/gpt-oss-20b`). | Callers switch models by changing one string. |
 | Cache | SQLite. Key = sha256 of the canonical JSON of every request field that can change the answer (model, messages, tools, tool_choice, response_format, max_tokens, seed, ...). Only `temperature == 0` is cached. | If an input is missing from the key, two different requests share an answer. If an irrelevant one is included, the cache never hits. Unset temperature means the provider default (1.0), so it isn't cached. |
 | Retry | Retries 429 and 5xx up to 5 attempts. Waits as long as `retry-after` says (plus up to 10% jitter); without it, uses exponential backoff with full jitter. Other 4xx errors are never retried. A `retry-after` over 60 s fails fast. | Jitter stops clients that failed together from retrying together. A daily quota shouldn't hold an HTTP request open for an hour. |
-| Rate limiter | Per model: token buckets for requests/min, tokens/min and output tokens/min (wait), and 24 h sliding windows for requests/day and tokens/day (refuse with 429). Each call reserves an estimate (cl100k prompt count + completion budget), and `reconcile` corrects it with the real `usage` afterwards. On restart, daily windows are rebuilt from the metrics table. | Groq's limits are per model, so each model's budget is tracked separately. Slowing down before Groq has to say 429 is cheaper than retrying after it does. |
+| Rate limiter | Per model: token buckets for requests/min, tokens/min and output tokens/min (wait), and 24 h sliding windows for requests/day and tokens/day (refuse with 429). Each call reserves an estimate (cl100k prompt count + completion budget), and `reconcile` corrects it with the real `usage` afterwards. Prompt tokens Groq served from its prompt cache don't count, because Groq doesn't count them either. On restart, daily windows are rebuilt from the metrics table. | Groq's limits are per model, so each model's budget is tracked separately. Slowing down before Groq has to say 429 is cheaper than retrying after it does. |
 | Groq provider | Plain `httpx`, with no SDK. | Status codes and `retry-after` stay visible to our retry layer, and there's no hidden second retry loop. |
-| Metrics | One SQLite row per request. `tokens_per_sec` uses Groq's `usage.completion_time`, falling back to wall-clock time. `est_cost_usd` uses paid-tier prices from `config/pricing.yaml`. | The free tier costs $0. What the same traffic would cost on the paid tier is the number that matters. |
+| Metrics | One SQLite row per request. `tokens_per_sec` uses Groq's `usage.completion_time`, falling back to wall-clock time. `cached_tokens` records how much of the prompt Groq's prompt cache served. `est_cost_usd` uses paid-tier prices from `config/pricing.yaml`, with cached prompt tokens at their 50% discount. | The free tier costs $0. What the same traffic would cost on the paid tier is the number that matters. |
 
 `latency_ms` is the model call alone (or the cache lookup on a hit). `total_ms` also includes rate-limit waits and retries. Keeping them separate means the gateway's own throttling doesn't inflate the model latency numbers.
 
@@ -128,7 +128,7 @@ Without a key, these work:
 
 ### Metrics table
 
-`requests` in `data/metrics.db`: `id, ts, project, trace_id, provider, model, status, cache_hit, attempts, prompt_tokens, completion_tokens, latency_ms, total_ms, completion_time_s, tokens_per_sec, est_cost_usd, error`.
+`requests` in `data/metrics.db`: `id, ts, project, trace_id, provider, model, status, cache_hit, attempts, prompt_tokens, completion_tokens, cached_tokens, latency_ms, total_ms, completion_time_s, tokens_per_sec, est_cost_usd, error`. Columns added later are added to an existing `metrics.db` when it's opened.
 
 ## What I'd do next
 

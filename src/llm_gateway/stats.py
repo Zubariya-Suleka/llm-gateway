@@ -38,6 +38,8 @@ class ModelStats:
     p50_ms: float | None
     p95_ms: float | None
     median_tokens_per_sec: float | None
+    # Share of prompt tokens the provider served from its own prompt cache (not our cache).
+    prompt_cached_pct: float | None
     cost_per_1k_usd: float | None
     error_pct: float
 
@@ -55,6 +57,9 @@ def summarize(rows: Iterable[Mapping[str, Any]]) -> list[ModelStats]:
         # Speed only means something for calls that actually generated tokens.
         speeds = [r["tokens_per_sec"] for r in ok if not r["cache_hit"] and r["tokens_per_sec"]]
         costs = [r["est_cost_usd"] for r in ok if r["est_cost_usd"] is not None]
+        called = [r for r in ok if not r["cache_hit"]]
+        prompt_total = sum(r.get("prompt_tokens") or 0 for r in called)
+        cached_total = sum(r.get("cached_tokens") or 0 for r in called)
         result.append(
             ModelStats(
                 model=model,
@@ -63,6 +68,7 @@ def summarize(rows: Iterable[Mapping[str, Any]]) -> list[ModelStats]:
                 p50_ms=percentile(latencies, 50),
                 p95_ms=percentile(latencies, 95),
                 median_tokens_per_sec=statistics.median(speeds) if speeds else None,
+                prompt_cached_pct=100 * cached_total / prompt_total if prompt_total else None,
                 cost_per_1k_usd=1000 * statistics.fmean(costs) if costs else None,
                 error_pct=100 * (len(group) - len(ok)) / len(group),
             )
@@ -77,6 +83,7 @@ _HEADERS = [
     "p50 ms",
     "p95 ms",
     "tokens/s",
+    "prompt cached %",
     "$/1K req",
     "error %",
 ]
@@ -95,6 +102,7 @@ def format_table(stats: Sequence[ModelStats], *, markdown: bool = False) -> str:
             _fmt(s.p50_ms, ".0f"),
             _fmt(s.p95_ms, ".0f"),
             _fmt(s.median_tokens_per_sec, ".0f"),
+            _fmt(s.prompt_cached_pct, ".0f"),
             _fmt(s.cost_per_1k_usd, ".4f"),
             _fmt(s.error_pct, ".1f"),
         ]

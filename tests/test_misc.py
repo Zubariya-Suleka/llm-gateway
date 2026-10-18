@@ -1,6 +1,7 @@
 """Small pure helpers: token estimates, pricing, mock provider, metrics queries."""
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -46,6 +47,38 @@ def test_pricing_exact_wildcard_and_unknown():
     assert pricing.cost("groq/a", 1_000_000, 2_000_000) == pytest.approx(1.1)
     assert pricing.cost("mock/anything", 10, 10) == 0
     assert pricing.cost("groq/unknown", 10, 10) is None
+
+
+def test_cached_prompt_tokens_use_the_cached_price_when_known():
+    pricing = Pricing({"groq/a": Price(0.1, 0.5, 0.05), "groq/b": Price(0.1, 0.5)})
+    # 600K uncached at $0.10/M + 400K cached at $0.05/M
+    assert pricing.cost("groq/a", 1_000_000, 0, cached_tokens=400_000) == pytest.approx(0.08)
+    # No cached price: charged as normal input, never guessed cheaper.
+    assert pricing.cost("groq/b", 1_000_000, 0, cached_tokens=400_000) == pytest.approx(0.1)
+
+
+def test_old_metrics_db_gains_new_columns(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE requests (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
+        " project TEXT, trace_id TEXT, provider TEXT, model TEXT NOT NULL,"
+        " status INTEGER NOT NULL, cache_hit INTEGER NOT NULL, attempts INTEGER NOT NULL,"
+        " prompt_tokens INTEGER, completion_tokens INTEGER, latency_ms REAL, total_ms REAL,"
+        " completion_time_s REAL, tokens_per_sec REAL, est_cost_usd REAL, error TEXT)"
+    )
+    old.execute(
+        "INSERT INTO requests (ts, model, status, cache_hit, attempts)"
+        " VALUES ('2026-10-18T00:00:00.000+00:00', 'groq/a', 200, 0, 1)"
+    )
+    old.commit()
+    old.close()
+
+    store = MetricsStore(path)
+    store.record(RequestRecord(model="groq/a", status=200, prompt_tokens=10, cached_tokens=4))
+
+    assert [r["cached_tokens"] for r in store.query()] == [None, 4]
+    store.close()
 
 
 def test_mock_fail_models_raise_with_that_status():

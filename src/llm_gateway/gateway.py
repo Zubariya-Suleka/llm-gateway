@@ -155,11 +155,13 @@ class Gateway:
         usage = body.get("usage") or {}
         prompt = usage.get("prompt_tokens")
         completion = usage.get("completion_tokens")
-        rec.prompt_tokens, rec.completion_tokens = prompt, completion
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+        rec.prompt_tokens, rec.completion_tokens, rec.cached_tokens = prompt, completion, cached
 
         if prompt is not None and completion is not None:
-            self._limiter.reconcile(rec.model, reserved, Usage(prompt, completion))
-            rec.est_cost_usd = self._pricing.cost(rec.model, prompt, completion)
+            # Groq doesn't count prompt-cache hits towards its limits, so neither do we.
+            self._limiter.reconcile(rec.model, reserved, Usage(prompt - cached, completion))
+            rec.est_cost_usd = self._pricing.cost(rec.model, prompt, completion, cached)
 
         # Groq reports generation time in usage; otherwise fall back to wall-clock latency.
         completion_time = usage.get("completion_time")
