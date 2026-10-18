@@ -37,7 +37,7 @@ Each layer in more detail:
 | Router | `groq/<id>` → Groq, `local/<hf-id>` → SmolLM, `mock/<name>` → fake. Splits on the first `/` only (`groq/openai/gpt-oss-20b`). | Callers switch models by changing one string. |
 | Cache | SQLite. Key = sha256 of the canonical JSON of every request field that can change the answer (model, messages, tools, tool_choice, response_format, max_tokens, seed, ...). Only `temperature == 0` is cached. | If an input is missing from the key, two different requests share an answer. If an irrelevant one is included, the cache never hits. Unset temperature means the provider default (1.0), so it isn't cached. |
 | Retry | Retries 429 and 5xx up to 5 attempts. Waits as long as `retry-after` says (plus up to 10% jitter); without it, uses exponential backoff with full jitter. Other 4xx errors are never retried. A `retry-after` over 60 s fails fast. | Jitter stops clients that failed together from retrying together. A daily quota shouldn't hold an HTTP request open for an hour. |
-| Rate limiter | Per model: token buckets for requests/min and tokens/min (wait), and 24 h sliding windows for requests/day and tokens/day (refuse with 429). Each call reserves an estimate (cl100k prompt count + completion budget), and `reconcile` corrects it with the real `usage` afterwards. On restart, daily windows are rebuilt from the metrics table. | Groq's limits are per model, so each model's budget is tracked separately. Slowing down before Groq has to say 429 is cheaper than retrying after it does. |
+| Rate limiter | Per model: token buckets for requests/min, tokens/min and output tokens/min (wait), and 24 h sliding windows for requests/day and tokens/day (refuse with 429). Each call reserves an estimate (cl100k prompt count + completion budget), and `reconcile` corrects it with the real `usage` afterwards. On restart, daily windows are rebuilt from the metrics table. | Groq's limits are per model, so each model's budget is tracked separately. Slowing down before Groq has to say 429 is cheaper than retrying after it does. |
 | Groq provider | Plain `httpx`, with no SDK. | Status codes and `retry-after` stay visible to our retry layer, and there's no hidden second retry loop. |
 | Metrics | One SQLite row per request. `tokens_per_sec` uses Groq's `usage.completion_time`, falling back to wall-clock time. `est_cost_usd` uses paid-tier prices from `config/pricing.yaml`. | The free tier costs $0. What the same traffic would cost on the paid tier is the number that matters. |
 
@@ -47,16 +47,25 @@ Each layer in more detail:
 
 Benchmark: 50 fixed prompts per model at temperature 0, capped at 512 output tokens. There are 20 short (~9 tokens), 20 medium (~170) and 10 long (~1,600). See [scripts/benchmark_prompts.json](scripts/benchmark_prompts.json). One untimed warm-up call per model runs first, so one-off costs (TLS setup, a local model load) stay out of p95.
 
-_Pending the first run with a Groq key (`just bench`, then paste the table here):_
+First run, 2026-10-18, Groq free tier:
 
-| model | requests | cache hit % | p50 ms | p95 ms | tokens/s | $/1K req | error % |
-|---|---|---|---|---|---|---|---|
-| groq/openai/gpt-oss-20b | | | | | | | |
-| groq/openai/gpt-oss-120b | | | | | | | |
-| groq/qwen/qwen3.8-27b | | | | | | | |
+| model | requests | p50 ms | p95 ms | tokens/s | $/1K req | error % |
+|---|---|---|---|---|---|---|
+| groq/openai/gpt-oss-20b | 50 | 643 | 1107 | 916 | 0.0935 | 0.0 |
+| groq/openai/gpt-oss-120b | 50 | 712 | 1051 | 481 | 0.1588 | 0.0 |
+| groq/qwen/qwen3.8-27b | 50 | 299 | 438 | 525 | 0.6345 | 4.0 |
+
+Re-run with the same prompts: both gpt-oss models got 100% cache hits (p50 1 ms, p95 ≤ 39 ms) and qwen got 96%. qwen's 2 failed prompts went back to Groq and succeeded. The whole re-run took 7 s instead of 4.5 min.
+
+How to read it:
+
+- **gpt-oss reasons before answering, and that reasoning counts as output.** About two-thirds of gpt-oss-20b's output tokens were reasoning (6,553 of 9,835, from `usage.completion_tokens_details`), so its tokens/s and its cost both include reasoning. qwen returned no reasoning. That's why its latency is lower: its replies are shorter (about 75 tokens against about 195 for gpt-oss-20b), not generated faster.
+- **The 512-token cap rarely bit.** It cut off 2 of the 100 gpt-oss answers, both from gpt-oss-20b. That doesn't affect the speed numbers, but it would matter for answer quality.
+- **The run itself was free.** `$/1K req` is what the same traffic would cost on Groq's paid tier.
 
 What failed at first, and how it was fixed:
 
+- **An output-token limit that isn't on Groq's rate-limits page.** qwen3.8-27b allows only 1,000 output tokens per minute, which surfaced only as a 429 in the first run: "output tokens per minute (OTPM): Limit 1000". The limiter didn't know about it, so 4 concurrent qwen calls kept getting 429s, and 2 of 50 failed after 5 attempts (the 4% above). The limiter now has an output-tokens-per-minute bucket. It charges only each call's completion budget and refunds the unused part once the real count comes back.
 - **Two Llama models went enterprise-only.** The plan compared Llama 3.1 8B and Llama 3.3 70B. By October 2026 Groq lists both as Enterprise-only, so the free-tier comparison is gpt-oss-20b vs gpt-oss-120b vs qwen3.8-27b (preview). Model IDs live in `config/`, so this was a config change, not a code change.
 - **A rounding error hung the rate limiter.** A rate-limiter test hung because, after a refill, the bucket held 0.9999999 tokens for a 1-token request. Each retry slept for a time too small to move the clock, forever. The fix is a 1e-6 tolerance in the bucket check, and the test now covers it.
 - **A one-time model load wrecked p95.** The first local SmolLM run reported p95 = 230 s over 3 requests, because the first call included a ~4-minute torch import and weight load. The benchmark now makes one untimed warm-up call per model, and the local provider times `generate()` only.
@@ -113,7 +122,7 @@ Without a key, these work:
 ### Configuration
 
 - `.env`: secrets and settings ([config.py](src/llm_gateway/config.py) lists them all)
-- [config/limits.yaml](config/limits.yaml): RPM / TPM / RPD / TPD per model (`groq/*` is the fallback)
+- [config/limits.yaml](config/limits.yaml): RPM / TPM / OTPM / RPD / TPD per model (`groq/*` is the fallback)
 - [config/pricing.yaml](config/pricing.yaml): USD per 1M input and output tokens
 - [config/models.yaml](config/models.yaml): the models the benchmark runs
 
