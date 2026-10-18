@@ -1,7 +1,9 @@
 """Client-side rate limiting, so the gateway slows down before Groq has to say 429.
 
 Per model (limits are per model on Groq, so each model gets its own budget):
-- requests/min and tokens/min: token buckets. When a bucket is empty, the call waits.
+- requests/min, tokens/min and output tokens/min: token buckets. When a bucket is empty,
+  the call waits. (Groq enforces output tokens/min on some models, e.g. 1000 on
+  qwen3.8-27b, without listing it on its rate-limits page.)
 - requests/day and tokens/day: 24-hour sliding windows. When a window is full, the call is
   refused right away with a clear error: waiting hours inside an HTTP request helps nobody.
 
@@ -36,8 +38,21 @@ _EPSILON = 1e-6
 class ModelLimits:
     rpm: int | None = None
     tpm: int | None = None
+    otpm: int | None = None  # output (completion) tokens per minute
     rpd: int | None = None
     tpd: int | None = None
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Tokens of one call: reserved up front (estimates) or reported afterwards (actual)."""
+
+    prompt: int
+    completion: int
+
+    @property
+    def total(self) -> int:
+        return self.prompt + self.completion
 
 
 def load_limits(path: Path) -> dict[str, ModelLimits]:
@@ -159,7 +174,7 @@ class ModelLimiter:
         def window(limit: int | None) -> SlidingWindow | None:
             return SlidingWindow(limit, clock=wall_clock) if limit else None
 
-        self.rpm, self.tpm = bucket(limits.rpm), bucket(limits.tpm)
+        self.rpm, self.tpm, self.otpm = bucket(limits.rpm), bucket(limits.tpm), bucket(limits.otpm)
         self.rpd, self.tpd = window(limits.rpd), window(limits.tpd)
 
     def seed(self, requests: int, tokens: int) -> None:
@@ -186,27 +201,31 @@ class ModelLimiter:
             retry_after=wait,
         )
 
-    async def acquire(self, est_tokens: int) -> float:
+    async def acquire(self, reserved: Usage) -> float:
         # Daily budgets first: refuse before queueing behind the per-minute buckets.
         self._check_daily(self.rpd, 1, "requests")
-        self._check_daily(self.tpd, est_tokens, "tokens")
+        self._check_daily(self.tpd, reserved.total, "tokens")
         waited = 0.0
-        if self.rpm:
-            waited += await self.rpm.acquire(1)
-        if self.tpm:
-            waited += await self.tpm.acquire(est_tokens)
+        for bucket, amount in (
+            (self.rpm, 1),
+            (self.tpm, reserved.total),
+            (self.otpm, reserved.completion),
+        ):
+            if bucket:
+                waited += await bucket.acquire(amount)
         if self.rpd:
             self.rpd.add(1)
         if self.tpd:
-            self.tpd.add(est_tokens)
+            self.tpd.add(reserved.total)
         return waited
 
-    def reconcile(self, est_tokens: int, actual_tokens: int) -> None:
-        delta = actual_tokens - est_tokens
+    def reconcile(self, reserved: Usage, actual: Usage) -> None:
         if self.tpm:
-            self.tpm.adjust(delta)
+            self.tpm.adjust(actual.total - reserved.total)
+        if self.otpm:
+            self.otpm.adjust(actual.completion - reserved.completion)
         if self.tpd:
-            self.tpd.add(delta)
+            self.tpd.add(actual.total - reserved.total)
 
 
 class RateLimiter:
@@ -243,11 +262,11 @@ class RateLimiter:
             self._limiters[model] = limiter
         return self._limiters[model]
 
-    async def acquire(self, model: str, est_tokens: int) -> float:
+    async def acquire(self, model: str, reserved: Usage) -> float:
         limiter = self._for(model)
-        return await limiter.acquire(est_tokens) if limiter else 0.0
+        return await limiter.acquire(reserved) if limiter else 0.0
 
-    def reconcile(self, model: str, est_tokens: int, actual_tokens: int) -> None:
+    def reconcile(self, model: str, reserved: Usage, actual: Usage) -> None:
         limiter = self._for(model)
         if limiter:
-            limiter.reconcile(est_tokens, actual_tokens)
+            limiter.reconcile(reserved, actual)

@@ -10,6 +10,7 @@ from llm_gateway.ratelimit import (
     RateLimiter,
     SlidingWindow,
     TokenBucket,
+    Usage,
     load_limits,
 )
 
@@ -84,9 +85,8 @@ def test_daily_request_budget_refuses_immediately_with_retry_after():
     limiter = model_limiter(t, ModelLimits(rpd=2))
 
     async def run():
-        await limiter.acquire(10)
-        await limiter.acquire(10)
-        await limiter.acquire(10)
+        for _ in range(3):
+            await limiter.acquire(Usage(10, 0))
 
     with pytest.raises(BudgetExhausted, match="daily requests budget") as info:
         asyncio.run(run())
@@ -99,22 +99,46 @@ def test_daily_token_budget_uses_real_usage_after_reconcile():
     limiter = model_limiter(t, ModelLimits(tpd=1000))
 
     async def run():
-        await limiter.acquire(900)  # reserve 900 ...
-        limiter.reconcile(900, 100)  # ... really used 100
-        await limiter.acquire(800)  # fits: 100 + 800 <= 1000
+        await limiter.acquire(Usage(400, 500))  # reserve 900 ...
+        limiter.reconcile(Usage(400, 500), Usage(60, 40))  # ... really used 100
+        await limiter.acquire(Usage(800, 0))  # fits: 100 + 800 <= 1000
 
     asyncio.run(run())
 
 
-def test_tokens_per_minute_waits():
+def test_tokens_per_minute_counts_prompt_and_completion():
     t = FakeTime()
     limiter = model_limiter(t, ModelLimits(tpm=6000))
 
     async def run():
-        await limiter.acquire(6000)
-        return await limiter.acquire(3000)
+        await limiter.acquire(Usage(5000, 1000))
+        return await limiter.acquire(Usage(2500, 500))
 
     assert asyncio.run(run()) == pytest.approx(30.0)  # 3000 tokens at 100 tokens/s
+
+
+def test_output_tokens_per_minute_counts_only_completion_tokens():
+    t = FakeTime()
+    limiter = model_limiter(t, ModelLimits(otpm=1000))
+
+    async def run():
+        await limiter.acquire(Usage(prompt=50_000, completion=600))  # a huge prompt is fine
+        return await limiter.acquire(Usage(prompt=10, completion=600))
+
+    # 1000/min = 16.7 tokens/s; 400 left, 600 needed -> wait for 200.
+    assert asyncio.run(run()) == pytest.approx(200 / (1000 / 60))
+
+
+def test_unused_output_reservation_is_refunded():
+    t = FakeTime()
+    limiter = model_limiter(t, ModelLimits(otpm=1000))
+
+    async def run():
+        await limiter.acquire(Usage(10, 600))
+        limiter.reconcile(Usage(10, 600), Usage(10, 80))  # the reply was only 80 tokens
+        return await limiter.acquire(Usage(10, 600))
+
+    assert asyncio.run(run()) == 0  # 1000 - 80 = 920 left, enough for 600
 
 
 def test_seeding_from_metrics_counts_earlier_usage():
@@ -127,7 +151,7 @@ def test_seeding_from_metrics_counts_earlier_usage():
         sleep=t.sleep,
     )
     with pytest.raises(BudgetExhausted):
-        asyncio.run(limiter.acquire("groq/m", 1))
+        asyncio.run(limiter.acquire("groq/m", Usage(1, 0)))
 
 
 def test_wildcard_limits_apply_and_unlisted_providers_are_unlimited():
@@ -137,9 +161,9 @@ def test_wildcard_limits_apply_and_unlisted_providers_are_unlimited():
     )
 
     async def run():
-        await limiter.acquire("groq/any-model", 1)
-        waited = await limiter.acquire("groq/any-model", 1)
-        unlimited = [await limiter.acquire("mock/x", 10**9) for _ in range(5)]
+        await limiter.acquire("groq/any-model", Usage(1, 0))
+        waited = await limiter.acquire("groq/any-model", Usage(1, 0))
+        unlimited = [await limiter.acquire("mock/x", Usage(10**9, 10**9)) for _ in range(5)]
         return waited, unlimited
 
     waited, unlimited = asyncio.run(run())
@@ -149,9 +173,11 @@ def test_wildcard_limits_apply_and_unlisted_providers_are_unlimited():
 
 def test_load_limits_from_yaml(tmp_path):
     path = tmp_path / "limits.yaml"
-    path.write_text("groq/a: {rpm: 30, tpm: 8000}\ngroq/*: {rpm: 10}\n", encoding="utf-8")
+    path.write_text(
+        "groq/a: {rpm: 30, tpm: 8000, otpm: 1000}\ngroq/*: {rpm: 10}\n", encoding="utf-8"
+    )
     assert load_limits(path) == {
-        "groq/a": ModelLimits(rpm=30, tpm=8000),
+        "groq/a": ModelLimits(rpm=30, tpm=8000, otpm=1000),
         "groq/*": ModelLimits(rpm=10),
     }
     assert load_limits(tmp_path / "missing.yaml") == {}

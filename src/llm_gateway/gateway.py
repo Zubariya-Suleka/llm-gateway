@@ -24,7 +24,7 @@ from llm_gateway.providers.base import Provider
 from llm_gateway.providers.groq import GroqProvider
 from llm_gateway.providers.local import LocalProvider
 from llm_gateway.providers.mock import MockProvider
-from llm_gateway.ratelimit import RateLimiter, load_limits
+from llm_gateway.ratelimit import RateLimiter, Usage, load_limits
 from llm_gateway.retry import RetryPolicy
 from llm_gateway.router import resolve
 from llm_gateway.schemas import ChatCompletionRequest
@@ -130,8 +130,9 @@ class Gateway:
                 return Result(cached, "HIT", 0)
 
         payload = request.provider_payload(model_id)
-        reserved = estimate_prompt_tokens(request.messages, request.tools) + completion_budget(
-            request.completion_limit()
+        reserved = Usage(
+            prompt=estimate_prompt_tokens(request.messages, request.tools),
+            completion=completion_budget(request.completion_limit()),
         )
 
         async def attempt(n: int) -> dict[str, Any]:
@@ -150,14 +151,14 @@ class Gateway:
             await asyncio.to_thread(self._cache.put, key, request.model, body)
         return Result(body, "MISS" if key else "BYPASS", rec.attempts)
 
-    def _account_usage(self, rec: RequestRecord, body: dict[str, Any], reserved: int) -> None:
+    def _account_usage(self, rec: RequestRecord, body: dict[str, Any], reserved: Usage) -> None:
         usage = body.get("usage") or {}
         prompt = usage.get("prompt_tokens")
         completion = usage.get("completion_tokens")
         rec.prompt_tokens, rec.completion_tokens = prompt, completion
 
         if prompt is not None and completion is not None:
-            self._limiter.reconcile(rec.model, reserved, prompt + completion)
+            self._limiter.reconcile(rec.model, reserved, Usage(prompt, completion))
             rec.est_cost_usd = self._pricing.cost(rec.model, prompt, completion)
 
         # Groq reports generation time in usage; otherwise fall back to wall-clock latency.
