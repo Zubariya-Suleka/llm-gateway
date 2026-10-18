@@ -50,7 +50,9 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
         return {
             "status": "ok",
             "version": __version__,
-            "groq_key_configured": settings.groq_api_key is not None,
+            "groq_key_configured": bool(
+                settings.groq_api_key and settings.groq_api_key.get_secret_value()
+            ),
         }
 
     @app.post("/v1/chat/completions")

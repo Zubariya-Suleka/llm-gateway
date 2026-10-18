@@ -75,6 +75,26 @@ async def run_model(
     run_id: str,
 ) -> Counter:
     outcomes: Counter = Counter()
+
+    # One untimed warm-up call: the first call pays one-off costs (TLS setup for Groq, a
+    # multi-minute model load for local/) that would otherwise land in p95. It is tagged with
+    # another project, so it stays out of the table, and cached after the first run.
+    warmup = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "temperature": 0,
+            "max_tokens": 8,
+        },
+        headers={"X-Project": "benchmark-warmup"},
+    )
+    if warmup.status_code != 200:
+        message = warmup.json().get("error", {}).get("message", warmup.text[:200])
+        print(f"  {model}: skipped, warm-up failed: {message}", file=sys.stderr)
+        outcomes["skipped"] = len(prompts)
+        return outcomes
+
     semaphore = asyncio.Semaphore(concurrency)
     started = time.perf_counter()
 

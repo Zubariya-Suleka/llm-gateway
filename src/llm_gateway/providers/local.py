@@ -92,6 +92,8 @@ class LocalProvider:
                 else {"do_sample": True, "temperature": temperature}
             )
 
+            # Timed around generate() only, so a first-call model load is not counted. Unlike
+            # Groq's completion_time, this includes prompt processing (prefill).
             started = time.perf_counter()
             # inference_mode is thread-local, so it is entered here, on the worker thread.
             with torch.inference_mode():

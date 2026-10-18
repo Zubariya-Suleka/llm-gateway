@@ -45,7 +45,7 @@ Each layer in more detail:
 
 ## Results
 
-Benchmark: 50 fixed prompts per model at temperature 0, capped at 512 output tokens. There are 20 short (~9 tokens), 20 medium (~170) and 10 long (~1,600). See [scripts/benchmark_prompts.json](scripts/benchmark_prompts.json).
+Benchmark: 50 fixed prompts per model at temperature 0, capped at 512 output tokens. There are 20 short (~9 tokens), 20 medium (~170) and 10 long (~1,600). See [scripts/benchmark_prompts.json](scripts/benchmark_prompts.json). One untimed warm-up call per model runs first, so one-off costs (TLS setup, a local model load) stay out of p95.
 
 _Pending the first run with a Groq key (`just bench`, then paste the table here):_
 
@@ -59,6 +59,7 @@ What failed at first, and how it was fixed:
 
 - **Two Llama models went enterprise-only.** The plan compared Llama 3.1 8B and Llama 3.3 70B. By October 2026 Groq lists both as Enterprise-only, so the free-tier comparison is gpt-oss-20b vs gpt-oss-120b vs qwen3.8-27b (preview). Model IDs live in `config/`, so this was a config change, not a code change.
 - **A rounding error hung the rate limiter.** A rate-limiter test hung because, after a refill, the bucket held 0.9999999 tokens for a 1-token request. Each retry slept for a time too small to move the clock, forever. The fix is a 1e-6 tolerance in the bucket check, and the test now covers it.
+- **A one-time model load wrecked p95.** The first local SmolLM run reported p95 = 230 s over 3 requests, because the first call included a ~4-minute torch import and weight load. The benchmark now makes one untimed warm-up call per model, and the local provider times `generate()` only.
 - **Tests downloaded the tokenizer every run.** The test suite re-downloaded tiktoken's vocabulary on every run (28 s). Now there's one cache directory in the repo, and CI caches it.
 
 ## Run it
